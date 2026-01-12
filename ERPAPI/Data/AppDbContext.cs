@@ -55,6 +55,8 @@ namespace ERPAPI.Data
                 .HasIndex(t => t.LabelKey)
                 .IsUnique(); // This makes LabelKey a unique index
 
+            modelBuilder.Entity<Transaction>().HasIndex(s => new { s.QuantitysheetId, s.ProcessId }).IsUnique();
+
         }
 
 
