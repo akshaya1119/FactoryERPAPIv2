@@ -645,238 +645,227 @@ namespace ERPAPI.Controllers
             }
         }
 
-        //Added this new api bulk
 
-        /*  [HttpPost("Bulk")]
-          public async Task<IActionResult> CreateTransactions([FromBody] List<Transaction> transactions)
-          {
-              if (transactions == null || !transactions.Any())
-                  return BadRequest("Invalid or empty transaction list.");
+        //[HttpPost("Bulk")]
+        //public async Task<IActionResult> CreateTransactions([FromBody] List<Transaction> transactions)
+        //{
+        //    if (transactions == null || !transactions.Any())
+        //        return BadRequest("Invalid or empty transaction list.");
 
-              using var dbTransaction = await _context.Database.BeginTransactionAsync();
+        //    using var dbTransaction = await _context.Database.BeginTransactionAsync();
 
-              try
-              {
-                  foreach (var transaction in transactions)
-                  {
-                      // Validate process
-                      var process = await _context.Processes
-                          .FirstOrDefaultAsync(p => p.Id == transaction.ProcessId);
+        //    try
+        //    {
+        //        var processIds = transactions.Select(t => t.ProcessId).Distinct().ToList();
+        //        var quantitySheetIds = transactions.Select(t => t.QuantitysheetId).Distinct().ToList();
 
-                      if (process == null)
-                          return BadRequest("Invalid ProcessId.");
+        //        // Preload processes
+        //        var processes = await _context.Processes
+        //            .Where(p => processIds.Contains(p.Id))
+        //            .ToDictionaryAsync(p => p.Id, p => p);
 
-                      var validProcessNames = new List<string>
-              {
-                  "Digital Printing", "CTP", "Offset Printing", "Cutting"
-              };
+        //        var validProcessNames = new HashSet<string>
+        //{
+        //    "Digital Printing", "CTP", "Offset Printing", "Cutting"
+        //};
 
-                      // ------------------------------------------------------------------
-                      // CASE 1: Process is DP / CTP / Offset / Cutting
-                      // ------------------------------------------------------------------
-                      if (validProcessNames.Contains(process.Name))
-                      {
-                          var existingTransaction = await _context.Transaction
-                              .FirstOrDefaultAsync(t =>
-                                  t.QuantitysheetId == transaction.QuantitysheetId &&
-                                  t.LotNo == transaction.LotNo &&
-                                  t.ProcessId == transaction.ProcessId);
+        //        // Preload all existing transactions in bulk
+        //        var existingTransactions = await _context.Transaction
+        //            .Where(t =>
+        //                processIds.Contains(t.ProcessId) &&
+        //                quantitySheetIds.Contains(t.QuantitysheetId))
+        //            .ToListAsync();
 
-                          if (existingTransaction != null)
-                          {
-                              var oldValues = existingTransaction.GetType().GetProperties()
-                                  .ToDictionary(prop => prop.Name, prop =>
-                                      prop.Name == "TeamId"
-                                          ? string.Join(",", existingTransaction.TeamId ?? new List<int>())
-                                          : prop.GetValue(existingTransaction)?.ToString());
+        //        var existingLookup = existingTransactions
+        //            .GroupBy(t => (t.QuantitysheetId, t.LotNo, t.ProcessId))
+        //            .ToDictionary(g => g.Key, g => g.First());
 
-                              // Update
-                              existingTransaction.InterimQuantity = transaction.InterimQuantity;
-                              existingTransaction.Remarks = transaction.Remarks;
-                              existingTransaction.ZoneId = transaction.ZoneId;
-                              existingTransaction.MachineId = transaction.MachineId;
-                              existingTransaction.Status = transaction.Status;
-                              existingTransaction.AlarmId = transaction.AlarmId;
-                              existingTransaction.TeamId = transaction.TeamId ?? new List<int>();
-                              existingTransaction.VoiceRecording = transaction.VoiceRecording;
+        //        // Preload all QuantitySheets once
+        //        var allSheets = await _context.QuantitySheets.ToListAsync();
 
-                              var newValues = existingTransaction.GetType().GetProperties()
-                                  .ToDictionary(prop => prop.Name, prop =>
-                                      prop.Name == "TeamId"
-                                          ? string.Join(",", existingTransaction.TeamId ?? new List<int>())
-                                          : prop.GetValue(existingTransaction)?.ToString());
+        //        // Group sheets for fast lookup
+        //        var sheetLookup = allSheets
+        //            .GroupBy(s => (s.CatchNo, s.LotNo, s.ProjectId))
+        //            .ToDictionary(g => g.Key, g => g.ToList());
 
-                              _context.Transaction.Update(existingTransaction);
+        //        var newTransactions = new List<Transaction>();
 
-                              // Logging
-                              foreach (var key in oldValues.Keys)
-                              {
-                                  var oldValue = oldValues[key];
-                                  var newValue = newValues[key];
+        //        foreach (var transaction in transactions)
+        //        {
+        //            if (!processes.TryGetValue(transaction.ProcessId, out var process))
+        //                return BadRequest("Invalid ProcessId.");
 
-                                  if (oldValue != newValue)
-                                  {
-                                      _loggerService.LogEventWithTransaction(
-                                          $"{key} updated",
-                                          "Transaction",
-                                          User.Identity?.Name != null ? int.Parse(User.Identity.Name) : 0,
-                                          existingTransaction.TransactionId,
-                                          oldValue: oldValue,
-                                          newValue: newValue
-                                      );
-                                  }
-                              }
-                          }
-                          else
-                          {
-                              // New entry
-                              transaction.TeamId = transaction.TeamId ?? new List<int>();
-                              _context.Transaction.Add(transaction);
+        //            // CASE 1 — faster lookup for process
+        //            if (validProcessNames.Contains(process.Name))
+        //            {
+        //                var key = (transaction.QuantitysheetId, transaction.LotNo, transaction.ProcessId);
 
-                              _loggerService.LogEventWithTransaction(
-                                 "Transaction created",
-                                 "Transaction",
-                                 User.Identity?.Name != null ? int.Parse(User.Identity.Name) : 0,
-                                 transaction.TransactionId,
-                                 newValue: $"TeamId: {string.Join(",", transaction.TeamId)}, ZoneId: {transaction.ZoneId}, MachineId: {transaction.MachineId}"
-                              );
-                          }
-                      }
-                      // ------------------------------------------------------------------
-                      // CASE 2: OTher Processes (requires catch grouping logic)
-                      // ------------------------------------------------------------------
-                      else
-                      {
-                          var qs = await _context.QuantitySheets
-                              .FirstOrDefaultAsync(q => q.QuantitySheetId == transaction.QuantitysheetId);
+        //                if (existingLookup.TryGetValue(key, out var existing))
+        //                {
+        //                    // update fields
+        //                    existing.InterimQuantity = transaction.InterimQuantity;
+        //                    existing.Remarks = transaction.Remarks;
+        //                    existing.ZoneId = transaction.ZoneId;
+        //                    existing.MachineId = transaction.MachineId;
+        //                    existing.Status = transaction.Status;
+        //                    existing.AlarmId = transaction.AlarmId;
+        //                    existing.TeamId = transaction.TeamId ?? new List<int>();
+        //                    existing.VoiceRecording = transaction.VoiceRecording;
+        //                }
+        //                else
+        //                {
+        //                    transaction.TeamId ??= new List<int>();
+        //                    newTransactions.Add(transaction);
+        //                }
+        //            }
 
-                          if (qs == null)
-                              return BadRequest("QuantitySheet not found.");
+        //            // CASE 2 — Group based on catch, lot, project
+        //            else
+        //            {
+        //                var qs = allSheets.FirstOrDefault(q => q.QuantitySheetId == transaction.QuantitysheetId);
+        //                if (qs == null)
+        //                    return BadRequest("QuantitySheet not found.");
 
-                          var allSheets = await _context.QuantitySheets
-                              .Where(q =>
-                                  q.CatchNo == qs.CatchNo &&
-                                  q.LotNo == transaction.LotNo.ToString() &&
-                                  q.ProjectId == transaction.ProjectId)
-                              .ToListAsync();
+        //                var key = (qs.CatchNo, transaction.LotNo.ToString(), transaction.ProjectId);
 
-                          foreach (var sheet in allSheets)
-                          {
-                              var existing = await _context.Transaction
-                                  .FirstOrDefaultAsync(t =>
-                                      t.QuantitysheetId == sheet.QuantitySheetId &&
-                                      t.LotNo == transaction.LotNo &&
-                                      t.ProcessId == transaction.ProcessId);
+        //                if (!sheetLookup.TryGetValue(key, out var groupSheets))
+        //                    continue;
 
-                              if (existing != null)
-                              {
-                                  existing.InterimQuantity = transaction.InterimQuantity;
-                                  existing.Remarks = transaction.Remarks;
-                                  existing.ZoneId = transaction.ZoneId;
-                                  existing.MachineId = transaction.MachineId;
-                                  existing.Status = transaction.Status;
-                                  existing.AlarmId = transaction.AlarmId;
-                                  existing.TeamId = transaction.TeamId ?? new List<int>();
-                                  existing.VoiceRecording = transaction.VoiceRecording;
+        //                foreach (var sheet in groupSheets)
+        //                {
+        //                    var exKey = (sheet.QuantitySheetId, transaction.LotNo, transaction.ProcessId);
 
-                                  _context.Transaction.Update(existing);
-                              }
-                              else
-                              {
-                                  var newTrans = new Transaction
-                                  {
-                                      InterimQuantity = transaction.InterimQuantity,
-                                      Remarks = transaction.Remarks,
-                                      VoiceRecording = transaction.VoiceRecording,
-                                      ProjectId = transaction.ProjectId,
-                                      QuantitysheetId = sheet.QuantitySheetId,
-                                      ProcessId = transaction.ProcessId,
-                                      ZoneId = transaction.ZoneId,
-                                      MachineId = transaction.MachineId,
-                                      Status = transaction.Status,
-                                      AlarmId = transaction.AlarmId,
-                                      LotNo = transaction.LotNo,
-                                      TeamId = transaction.TeamId ?? new List<int>()
-                                  };
+        //                    if (existingLookup.TryGetValue(exKey, out var existing))
+        //                    {
+        //                        existing.InterimQuantity = transaction.InterimQuantity;
+        //                        existing.Remarks = transaction.Remarks;
+        //                        existing.ZoneId = transaction.ZoneId;
+        //                        existing.MachineId = transaction.MachineId;
+        //                        existing.Status = transaction.Status;
+        //                        existing.AlarmId = transaction.AlarmId;
+        //                        existing.TeamId = transaction.TeamId ?? new List<int>();
+        //                        existing.VoiceRecording = transaction.VoiceRecording;
+        //                    }
+        //                    else
+        //                    {
+        //                        newTransactions.Add(new Transaction
+        //                        {
+        //                            InterimQuantity = transaction.InterimQuantity,
+        //                            Remarks = transaction.Remarks,
+        //                            VoiceRecording = transaction.VoiceRecording,
+        //                            ProjectId = transaction.ProjectId,
+        //                            QuantitysheetId = sheet.QuantitySheetId,
+        //                            ProcessId = transaction.ProcessId,
+        //                            ZoneId = transaction.ZoneId,
+        //                            MachineId = transaction.MachineId,
+        //                            Status = transaction.Status,
+        //                            AlarmId = transaction.AlarmId,
+        //                            LotNo = transaction.LotNo,
+        //                            TeamId = transaction.TeamId ?? new List<int>()
+        //                        });
+        //                    }
+        //                }
+        //            }
+        //        }
 
-                                  _context.Transaction.Add(newTrans);
-                              }
-                          }
-                      }
-                  }
+        //        // Add all new rows in one go
+        //        if (newTransactions.Any())
+        //            await _context.Transaction.AddRangeAsync(newTransactions);
 
-                  // Save all at once
-                  await _context.SaveChangesAsync();
-                  await dbTransaction.CommitAsync();
+        //        await _context.SaveChangesAsync();
+        //        await dbTransaction.CommitAsync();
 
-                  return Ok(new { message = "Transactions created/updated successfully." });
-              }
-              catch (Exception ex)
-              {
-                  await dbTransaction.RollbackAsync();
-                  return StatusCode(500, ex.Message);
-              }
-          }
-  */
+        //        return Ok(new { message = "Transactions created/updated successfully." });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        await dbTransaction.RollbackAsync();
+        //        return StatusCode(500, ex.Message);
+        //    }
+        //}
 
 
         [HttpPost("Bulk")]
         public async Task<IActionResult> CreateTransactions([FromBody] List<Transaction> transactions)
         {
+            Console.WriteLine("Bulk CreateTransactions API called.");
+
             if (transactions == null || !transactions.Any())
+            {
+                Console.WriteLine("Request failed: Transaction list is null or empty.");
                 return BadRequest("Invalid or empty transaction list.");
+            }
+
+            Console.WriteLine($"Received {transactions.Count} transactions.");
 
             using var dbTransaction = await _context.Database.BeginTransactionAsync();
+            Console.WriteLine("Database transaction started.");
 
             try
             {
                 var processIds = transactions.Select(t => t.ProcessId).Distinct().ToList();
                 var quantitySheetIds = transactions.Select(t => t.QuantitysheetId).Distinct().ToList();
 
+                Console.WriteLine($"Distinct ProcessIds count: {processIds.Count}");
+                Console.WriteLine($"Distinct QuantitySheetIds count: {quantitySheetIds.Count}");
+
                 // Preload processes
                 var processes = await _context.Processes
                     .Where(p => processIds.Contains(p.Id))
                     .ToDictionaryAsync(p => p.Id, p => p);
+
+                Console.WriteLine($"Loaded {processes.Count} processes from DB.");
 
                 var validProcessNames = new HashSet<string>
         {
             "Digital Printing", "CTP", "Offset Printing", "Cutting"
         };
 
-                // Preload all existing transactions in bulk
+                // Preload existing transactions
+              
+
+                // Preload all QuantitySheets
+                var allSheets = await _context.QuantitySheets.ToListAsync();
+                Console.WriteLine($"Loaded {allSheets.Count} QuantitySheets.");
+
+                var sheetLookup = allSheets
+                    .GroupBy(s => (s.CatchNo, s.LotNo, s.ProjectId))
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                var allGroupedSheetIds = sheetLookup
+                .SelectMany(x => x.Value)
+                .Select(s => s.QuantitySheetId)
+                .Distinct()
+                .ToList();
                 var existingTransactions = await _context.Transaction
-                    .Where(t =>
-                        processIds.Contains(t.ProcessId) &&
-                        quantitySheetIds.Contains(t.QuantitysheetId))
-                    .ToListAsync();
+                   .Where(t =>
+                       processIds.Contains(t.ProcessId) &&
+                       allGroupedSheetIds.Contains(t.QuantitysheetId))
+                   .ToListAsync();
 
                 var existingLookup = existingTransactions
                     .GroupBy(t => (t.QuantitysheetId, t.LotNo, t.ProcessId))
                     .ToDictionary(g => g.Key, g => g.First());
 
-                // Preload all QuantitySheets once
-                var allSheets = await _context.QuantitySheets.ToListAsync();
-
-                // Group sheets for fast lookup
-                var sheetLookup = allSheets
-                    .GroupBy(s => (s.CatchNo, s.LotNo, s.ProjectId))
-                    .ToDictionary(g => g.Key, g => g.ToList());
-
+               
                 var newTransactions = new List<Transaction>();
 
                 foreach (var transaction in transactions)
                 {
-                    if (!processes.TryGetValue(transaction.ProcessId, out var process))
-                        return BadRequest("Invalid ProcessId.");
 
-                    // CASE 1 — faster lookup for process
+                    if (!processes.TryGetValue(transaction.ProcessId, out var process))
+                    {
+                        Console.WriteLine($"Invalid ProcessId encountered: {transaction.ProcessId}");
+                        return BadRequest("Invalid ProcessId.");
+                    }
+
+                    // CASE 1 — Direct process match
                     if (validProcessNames.Contains(process.Name))
                     {
                         var key = (transaction.QuantitysheetId, transaction.LotNo, transaction.ProcessId);
 
                         if (existingLookup.TryGetValue(key, out var existing))
                         {
-                            // update fields
                             existing.InterimQuantity = transaction.InterimQuantity;
                             existing.Remarks = transaction.Remarks;
                             existing.ZoneId = transaction.ZoneId;
@@ -893,17 +882,21 @@ namespace ERPAPI.Controllers
                         }
                     }
 
-                    // CASE 2 — Group based on catch, lot, project
+                    // CASE 2 — Group based logic
                     else
                     {
                         var qs = allSheets.FirstOrDefault(q => q.QuantitySheetId == transaction.QuantitysheetId);
                         if (qs == null)
+                        {
                             return BadRequest("QuantitySheet not found.");
+                        }
 
                         var key = (qs.CatchNo, transaction.LotNo.ToString(), transaction.ProjectId);
 
                         if (!sheetLookup.TryGetValue(key, out var groupSheets))
+                        {
                             continue;
+                        }
 
                         foreach (var sheet in groupSheets)
                         {
@@ -942,11 +935,13 @@ namespace ERPAPI.Controllers
                     }
                 }
 
-                // Add all new rows in one go
                 if (newTransactions.Any())
+                {
                     await _context.Transaction.AddRangeAsync(newTransactions);
+                }
 
                 await _context.SaveChangesAsync();
+
                 await dbTransaction.CommitAsync();
 
                 return Ok(new { message = "Transactions created/updated successfully." });
@@ -954,10 +949,10 @@ namespace ERPAPI.Controllers
             catch (Exception ex)
             {
                 await dbTransaction.RollbackAsync();
+
                 return StatusCode(500, ex.Message);
             }
         }
-
 
 
 
