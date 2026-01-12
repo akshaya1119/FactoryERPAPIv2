@@ -65,8 +65,8 @@ namespace ERPAPI.Controllers
         {
             try
             {
-                var today = DateTime.Today;
-
+                var today = DateTime.UtcNow.Date;
+                Console.WriteLine(today.ToString());
                 // 1. Get all dispatches with today's DispatchDate
                 var dispatches = await _context.Dispatch
                     .Where(d => d.DispatchDate >= today && d.DispatchDate < today.AddDays(1))

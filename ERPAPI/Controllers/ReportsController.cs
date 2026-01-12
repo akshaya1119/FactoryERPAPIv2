@@ -1001,35 +1001,120 @@ namespace ERPAPI.Controllers
                 return StatusCode(500, new { message = "An error occurred", error = ex.Message });
             }
         }
+        [HttpGet("db-info")]
+        public IActionResult GetDbSource([FromServices] IConfiguration config)
+        {
+            var cs = config.GetConnectionString("DefaultConnection");
+            return Ok(cs);
+        }
+
+
+        //[HttpGet("debug/db-source")]
+        //public IActionResult DebugDbSource()
+        //{
+        //    Console.WriteLine(_context.Database.GetDbConnection().ConnectionString);
+        //    return Ok(_context.Database.GetDbConnection().DataSource);
+        //}
 
 
 
-        [HttpGet("process-wise/{projectId}/{catchNo}")]
+        [HttpGet("process-wise/{projectId}/{*catchNo}")]
         public async Task<IActionResult> GetProcessWiseData(int projectId, string catchNo)
         {
-            var quantitySheet = await _context.QuantitySheets
-                .Where(q => q.ProjectId == projectId && q.CatchNo == catchNo)
-                .Select(q => new { q.QuantitySheetId, q.ProcessId, q.ProjectId })
-                .FirstOrDefaultAsync();
+            Console.WriteLine("======== PROCESS-WISE API START ========");
+            Console.WriteLine($"Incoming Request => ProjectId={projectId}, Raw CatchNo='{catchNo}'");
+
+            // Decode URL encoded values
+            catchNo = Uri.UnescapeDataString(catchNo ?? string.Empty).Trim();
+            Console.WriteLine($"Decoded CatchNo => '{catchNo}'");
+
+            // ---------- Normalization Helper ----------
+            string Normalize(string v) =>
+                (v ?? "")
+                    .Trim()
+                    .Replace(" ", "")
+                    .Replace("\u00A0", "")
+                    .Replace("\u200B", "")
+                    .Replace("⁄", "/")
+                    .Replace("\\", "/")
+                    .ToUpperInvariant();
+
+            var normalizedCatch = Normalize(catchNo);
+            Console.WriteLine($"Normalized CatchNo => '{normalizedCatch}'");
+
+            // ---------- Load all sheets in project ----------
+            Console.WriteLine($"Loading QuantitySheets for ProjectId={projectId}...");
+
+            var sheets = await _context.QuantitySheets
+                .Where(q => q.ProjectId == projectId)
+                .ToListAsync();
+
+            Console.WriteLine($"Total QuantitySheets Loaded => {sheets.Count}");
+
+            Console.WriteLine("Listing normalized CatchNos from DB:");
+            foreach (var s in sheets)
+                Console.WriteLine(
+                    $"SheetId={s.QuantitySheetId}, LotNo={s.LotNo}, Raw='{s.CatchNo}', Normalized='{Normalize(s.CatchNo)}'"
+                );
+
+            // ---------- Match CatchNo across ALL lots ----------
+            Console.WriteLine("Searching matching CatchNo across all lots...");
+
+            var quantitySheet = sheets
+                .Select(q => new
+                {
+                    Sheet = q,
+                    Normalized = Normalize(q.CatchNo)
+                })
+                .FirstOrDefault(x =>
+                    x.Normalized == normalizedCatch ||
+                    x.Normalized.Contains(normalizedCatch));
 
             if (quantitySheet == null)
-                return NotFound("No data found for the given ProjectId and CatchNo.");
+            {
+                Console.WriteLine($"MATCH NOT FOUND => CatchNo '{catchNo}' in ProjectId={projectId}");
+                Console.WriteLine("======== PROCESS-WISE API END (404) ========");
+                return NotFound($"CatchNo '{catchNo}' not found in ProjectId = {projectId}.");
+            }
+
+            Console.WriteLine("MATCH FOUND");
+            Console.WriteLine($"Matched SheetId={quantitySheet.Sheet.QuantitySheetId}");
+            Console.WriteLine($"Matched LotNo={quantitySheet.Sheet.LotNo}");
+            Console.WriteLine($"Matched Raw CatchNo='{quantitySheet.Sheet.CatchNo}'");
+
+            // ---------- Load Project Processes ----------
+            Console.WriteLine("Loading ProjectProcesses...");
 
             var projectProcesses = await _context.ProjectProcesses
-                .Where(pp => pp.ProjectId == quantitySheet.ProjectId)
+                .Where(pp => pp.ProjectId == quantitySheet.Sheet.ProjectId)
                 .OrderBy(pp => pp.Sequence)
                 .ToListAsync();
 
+            Console.WriteLine($"ProjectProcesses Loaded => {projectProcesses.Count}");
+
+            // ---------- Load Transactions ----------
+            Console.WriteLine($"Loading Transactions for QuantitySheetId={quantitySheet.Sheet.QuantitySheetId}...");
+
             var transactions = await _context.Transaction
-                .Where(t => t.QuantitysheetId == quantitySheet.QuantitySheetId)
+                .Where(t => t.QuantitysheetId == quantitySheet.Sheet.QuantitySheetId)
                 .ToListAsync();
 
+            Console.WriteLine($"Transactions Loaded => {transactions.Count}");
+
             var transactionIds = transactions.Select(t => t.TransactionId).ToList();
+
+            // ---------- Event Logs ----------
+            Console.WriteLine("Loading EventLogs...");
 
             var eventLogs = await _context.EventLogs
                 .Where(e => transactionIds.Contains(e.TransactionId.Value) && e.Event == "Status updated")
                 .Select(e => new { e.TransactionId, e.LoggedAT, e.EventTriggeredBy })
                 .ToListAsync();
+
+            Console.WriteLine($"EventLogs Loaded => {eventLogs.Count}");
+
+            // ---------- Supervisor Logs ----------
+            Console.WriteLine("Loading Supervisor Logs...");
 
             var supervisorLogs = await _context.EventLogs
                 .Where(e => transactionIds.Contains(e.TransactionId.Value))
@@ -1040,6 +1125,11 @@ namespace ERPAPI.Controllers
                     EventTriggeredBy = g.Select(e => e.EventTriggeredBy).FirstOrDefault()
                 })
                 .ToListAsync();
+
+            Console.WriteLine($"SupervisorLogs Loaded => {supervisorLogs.Count}");
+
+            // ---------- Lookup Tables ----------
+            Console.WriteLine("Loading Lookup Tables (Users, Zones, Machines)...");
 
             var users = await _context.Users
                 .Select(u => new { u.UserId, FullName = u.FirstName + " " + u.LastName })
@@ -1053,16 +1143,27 @@ namespace ERPAPI.Controllers
                 .Select(m => new { m.MachineId, m.MachineName })
                 .ToListAsync();
 
-            // Convert to dictionaries for quick lookup (O(1))
+            Console.WriteLine($"Users={users.Count}, Zones={zones.Count}, Machines={machines.Count}");
+
+            // ---------- Create lookup maps ----------
+            Console.WriteLine("Building lookup dictionaries...");
+
             var zoneMap = zones.ToDictionary(z => z.ZoneId, z => z.ZoneNo);
             var machineMap = machines.ToDictionary(m => m.MachineId, m => m.MachineName);
             var userMap = users.ToDictionary(u => u.UserId, u => u.FullName);
             var supervisorMap = supervisorLogs.ToDictionary(s => s.TransactionId, s => s.EventTriggeredBy);
 
+            // ---------- Filter + Map Processes ----------
+            Console.WriteLine("Filtering processes that contain transactions...");
+
             var filteredProjectProcesses = projectProcesses
                 .Where(pp => transactions.Any(t => t.ProcessId == pp.ProcessId))
                 .OrderBy(pp => pp.Sequence)
                 .ToList();
+
+            Console.WriteLine($"Processes with transactions => {filteredProjectProcesses.Count}");
+
+            Console.WriteLine("Building final process-wise result...");
 
             var processWiseData = filteredProjectProcesses
                 .Select(pp => new
@@ -1098,8 +1199,12 @@ namespace ERPAPI.Controllers
                 })
                 .ToList();
 
+            Console.WriteLine("PROCESS-WISE DATA GENERATION COMPLETED");
+            Console.WriteLine("======== PROCESS-WISE API END SUCCESS ========");
+
             return Ok(processWiseData);
         }
+
         [HttpGet("DailyProductionReport")]
         public async Task<IActionResult> GetDailyProductionReport(string? date = null, string? startDate = null, string? endDate = null)
         {
