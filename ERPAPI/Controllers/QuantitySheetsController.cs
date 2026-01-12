@@ -1084,6 +1084,33 @@ public class QuantitySheetController : ControllerBase
         return _context.QuantitySheets.Any(e => e.QuantitySheetId == id);
     }
 
+    [HttpDelete("DeleteLot/{projectId}/{lotNo}")]
+    public async Task<IActionResult> DeleteQuantitySheetsByLot(int projectId, string lotNo)
+    {
+        // Check if any transactions exist for this project and lot
+        var hasTransactions = await _context.Transaction
+            .AnyAsync(t => t.ProjectId == projectId && t.LotNo.ToString() == lotNo);
+
+        if (hasTransactions)
+        {
+            return BadRequest("Cannot delete this lot because transactions exist for it.");
+        }
+
+        // Get all quantity sheets for this project and lot where StopCatch is 0
+        var sheetsToDelete = await _context.QuantitySheets
+            .Where(q => q.ProjectId == projectId && q.LotNo == lotNo && q.StopCatch == 0)
+            .ToListAsync();
+
+        if (!sheetsToDelete.Any())
+        {
+            return NotFound("No quantity sheets found for the specified project and lot.");
+        }
+
+        _context.QuantitySheets.RemoveRange(sheetsToDelete);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
 
 
     // First, create a DTO to handle the transfer request
@@ -1297,12 +1324,21 @@ public class QuantitySheetController : ControllerBase
     [HttpDelete("DeleteByProjectId/{projectId}")]
     public async Task<IActionResult> DeleteByProjectId(int projectId)
     {
+        // Check if any transactions exist for this project
+        var hasTransactions = await _context.Transaction
+            .AnyAsync(t => t.ProjectId == projectId);
+
+        if (hasTransactions)
+        {
+            return BadRequest("Cannot delete sheets because transactions exist for this project.");
+        }
+
         // Find all quantity sheets for the given projectId
         var sheetsToDelete = await _context.QuantitySheets
             .Where(s => s.ProjectId == projectId)
             .ToListAsync();
 
-        if (sheetsToDelete == null || !sheetsToDelete.Any())
+        if (!sheetsToDelete.Any())
         {
             return NotFound($"No quantity sheets found for Project ID: {projectId}");
         }
@@ -1313,5 +1349,6 @@ public class QuantitySheetController : ControllerBase
 
         return NoContent(); // Return 204 No Content on successful deletion
     }
+
 
 }
