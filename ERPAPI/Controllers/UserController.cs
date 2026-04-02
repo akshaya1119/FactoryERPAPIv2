@@ -166,78 +166,81 @@ namespace ERPAPI.Controllers
         }
 
 
-        /* [HttpGet("LoggedUser")]
-         [Authorize] // Ensures the request is authenticated
-         public async Task<ActionResult<User>> GetUserByJwt()
-         {
-             try
-             {
-                 var userIdClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
-                 if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out int userId))
-                 {
-                     return BadRequest("Invalid token");
-                 }
 
-                 // Retrieve the user from the database
-                 var user = await _context.Users
-                     .Where(u => u.UserId == userId)
-                     .Join(
-                         _context.Roles,
-                         user => user.RoleId,
-                         role => role.RoleId,
-                         (user, role) => new
-                         {
-                             user.UserId,
-                             user.UserName,
-                             user.FirstName,
-                             user.MiddleName,
-                             user.LastName,
-                             user.MobileNo,
-                             user.Status,
-                             user.Gender,
-                             user.Address,
-                             user.ProfilePicturePath,
-                             Role = new
-                             {
-                                 role.RoleId,
-                                 role.RoleName,
-                                 role.PriorityOrder,
-                                 role.Status,
-                                 Permissions = role.PermissionList // Use PermissionList for deserialized permissions
-                             }
-                         }
-                     )
-                     .FirstOrDefaultAsync();
+        //[HttpGet("LoggedUser")]
+        //[Authorize] // Ensures the request is authenticated
+        //public async Task<ActionResult<User>> GetUserByJwt()
+        //{
+        //    try
+        //    {
+        //        var userIdClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
+        //        if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out int userId))
+        //        {
+        //            return BadRequest("Invalid token");
+        //        }
 
-                 if (user == null)
-                 {
-                     return NotFound("User not found.");
-                 }
+        //        // Retrieve the user from the database
+        //        var user = await _context.Users
+        //            .Where(u => u.UserId == userId)
+        //            .Join(
+        //                _context.Roles,
+        //                user => user.RoleId,
+        //                role => role.RoleId,
+        //                (user, role) => new
+        //                {
+        //                    user.UserId,
+        //                    user.UserName,
+        //                    user.FirstName,
+        //                    user.MiddleName,
+        //                    user.LastName,
+        //                    user.MobileNo,
+        //                    user.Status,
+        //                    user.Gender,
+        //                    user.Address,
+        //                    user.ProfilePicturePath,
+        //                    Role = new
+        //                    {
+        //                        role.RoleId,
+        //                        role.RoleName,
+        //                        role.PriorityOrder,
+        //                        role.Status,
+        //                        Permissions = role.PermissionList // Use PermissionList for deserialized permissions
+        //                    }
+        //                }
+        //            )
+        //            .FirstOrDefaultAsync();
 
-                 return Ok(user); // Return the retrieved user information
-             }
-             catch (Exception ex)
-             {
-                 _loggerService.LogError("Failed to retrieve user by JWT", ex.Message, "UserController");
-                 return StatusCode(500, "Failed to retrieve user");
-             }
-         }
- */
+        //        if (user == null)
+        //        {
+        //            return NotFound("User not found.");
+        //        }
+
+        //        return Ok(user); // Return the retrieved user information
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _loggerService.LogError("Failed to retrieve user by JWT", ex.Message, "UserController");
+        //        return StatusCode(500, "Failed to retrieve user");
+        //    }
+        //}
 
 
         [HttpGet("LoggedUser")]
-        [Authorize] // Ensures the request is authenticated
+        [Authorize]
         public async Task<ActionResult<User>> GetUserByJwt()
         {
             try
             {
-                var userIdClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
-                if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out int userId))
+                // ✅ FIX: read "userid" (same as token)
+                var userIdClaim = HttpContext.User.Claims
+                    .FirstOrDefault(c => c.Type == "userid")?.Value;
+
+                if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out int userId))
                 {
                     return BadRequest("Invalid token");
                 }
 
-                // Retrieve the user from the database
+                // 🔥 SAME JOIN LOGIC
                 var user = await _context.Users
                     .Where(u => u.UserId == userId)
                     .Join(
@@ -262,7 +265,7 @@ namespace ERPAPI.Controllers
                                 role.RoleName,
                                 role.PriorityOrder,
                                 role.Status,
-                                Permissions = role.PermissionList // Use PermissionList for deserialized permissions
+                                Permissions = role.PermissionList
                             }
                         }
                     )
@@ -273,7 +276,7 @@ namespace ERPAPI.Controllers
                     return NotFound("User not found.");
                 }
 
-                return Ok(user); // Return the retrieved user information
+                return Ok(user);
             }
             catch (Exception ex)
             {
@@ -281,9 +284,6 @@ namespace ERPAPI.Controllers
                 return StatusCode(500, "Failed to retrieve user");
             }
         }
-
-
-
 
 
 
@@ -580,6 +580,7 @@ namespace ERPAPI.Controllers
             }
         }
 
+        [Authorize]
         [HttpPost("UnlockScreenByPin")]
         public async Task<IActionResult> UnlockScreenByPin([FromBody] PinUnlockRequest request)
         {
@@ -592,11 +593,12 @@ namespace ERPAPI.Controllers
                 }
 
                 // Retrieve the user from the token
-                var userIdClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
+                var userIdClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "userid");
                 if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out int userId))
                 {
                     return BadRequest(new { Message = "Invalid User Token." });
                 }
+               Console.WriteLine($"userIdClaim: {userIdClaim.Type}, {userIdClaim.Value}");
 
                 // Find the user in the database
                 var userAuth = await _context.UserAuths.FirstOrDefaultAsync(u => u.UserId == userId);
@@ -628,7 +630,7 @@ namespace ERPAPI.Controllers
             public int Pin { get; set; }
         }
 
-
+        [Authorize]
         [HttpPut("ChangeScreenLockPin")]
         public async Task<IActionResult> ChangeScreenLockPin([FromBody] ChangePinRequest request)
         {
@@ -640,7 +642,7 @@ namespace ERPAPI.Controllers
                     return BadRequest(new { Message = "Both Old PIN and New PIN are required and must be positive numbers." });
                 }
 
-                var userIdClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Name);
+                var userIdClaim = HttpContext.User.Claims.FirstOrDefault(c => c.Type == "userid");
                 if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out int userId))
                 {
                     return BadRequest("Invalid token");

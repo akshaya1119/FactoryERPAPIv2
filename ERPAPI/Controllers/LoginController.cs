@@ -32,44 +32,110 @@ namespace ERPAPI.Controllers
             _loggerService = loggerService;
         }
 
-        private string GenerateToken(UserAuth user)
+        private string GenerateToken(User user)
         {
-            var securitykey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
-            var credentials = new SigningCredentials(securitykey, SecurityAlgorithms.HmacSha256);
+            var key = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
+
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var claims = new List<Claim>
-            {
-                new Claim(ClaimTypes.Name, user.UserId.ToString()),
-                new Claim("AutogenPass", user.AutogenPass.ToString()),
-            };
+    {
+        new Claim("userid", user.UserId.ToString()),   // ✅ important
+        new Claim("roleid", user.RoleId.ToString())
+    };
 
             var token = new JwtSecurityToken(
                 issuer: _configuration["Jwt:Issuer"],
-                audience: _configuration["Jwt:Issuer"],
+                audience: _configuration["Jwt:Audience"],
                 claims: claims,
                 expires: DateTime.Now.AddHours(8),
-                signingCredentials: credentials
-                );
+                signingCredentials: creds
+            );
+
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
+        //[AllowAnonymous]
+        //[HttpPost("login")]
+
+        //public IActionResult Login([FromBody] Model.NonDbModels.LoginRequest loginRequest)
+        //{
+        //    var userAuth = (from user in _context.Users
+        //                    join ua in _context.UserAuths on user.UserId equals ua.UserId
+        //                    join ur in _context.Set<User>() on user.UserId equals ur.UserId
+
+        //                    join r in _context.Set<Role>() on ur.RoleId equals r.RoleId
+        //                    where user.UserName == loginRequest.UserName
+        //                    select new
+        //                    {
+        //                        ua,
+        //                        user.Status,
+        //                        user.UserName,
+        //                        Role = new
+        //                        {
+        //                            r.RoleId,
+        //                            r.RoleName,
+        //                            r.PriorityOrder,
+        //                            r.PermissionList,
+        //                            r.Status,
+        //                        }
+        //                    }).FirstOrDefault();
+
+        //    if (userAuth == null)
+        //    {
+        //        return NotFound("User not found");
+        //    }
+
+        //    if (!userAuth.Status)
+        //    {
+        //        return Unauthorized("User is inactive");
+        //    }
+
+        //    string hashedPassword = Sha256.ComputeSHA256Hash(loginRequest.Password);
+
+        //    if (hashedPassword != userAuth.ua.Password)
+        //    {
+        //        return Unauthorized("Invalid password");
+        //    }
+
+        //    // Check if it's the user's first login (AutogenPass == true)
+        //    if (userAuth.ua.AutogenPass)
+        //    {
+        //        // Let the user login but prompt them to change their password
+        //        var token = GenerateToken(userAuth.ua);
+        //        _loggerService.LogEvent($"User Logged-in (First Time)", "Login", userAuth.ua.UserId);
+        //        return Ok(new
+        //        {
+        //            token = token,
+        //            userAuth.ua.UserId,
+        //            userAuth.ua.AutogenPass,
+
+        //            Message = "This is your first login, please change your password."
+        //        });
+        //    }
+        //    else
+        //    {
+        //        // Normal login process
+        //        var token = GenerateToken(userAuth.ua);
+        //        _loggerService.LogEvent($"User Logged-in", "Login", userAuth.ua.UserId);
+        //        return Ok(new { token = token, userAuth.ua.UserId, userAuth.ua.AutogenPass, role = userAuth.Role });
+        //    }
+
+        //}
 
         [AllowAnonymous]
         [HttpPost("login")]
-
         public IActionResult Login([FromBody] Model.NonDbModels.LoginRequest loginRequest)
         {
             var userAuth = (from user in _context.Users
                             join ua in _context.UserAuths on user.UserId equals ua.UserId
-                            join ur in _context.Set<User>() on user.UserId equals ur.UserId
-
-                            join r in _context.Set<Role>() on ur.RoleId equals r.RoleId
+                            join r in _context.Roles on user.RoleId equals r.RoleId
                             where user.UserName == loginRequest.UserName
                             select new
                             {
+                                user,   // ✅ IMPORTANT
                                 ua,
-                                user.Status,
-                                user.UserName,
                                 Role = new
                                 {
                                     r.RoleId,
@@ -81,45 +147,200 @@ namespace ERPAPI.Controllers
                             }).FirstOrDefault();
 
             if (userAuth == null)
-            {
                 return NotFound("User not found");
-            }
 
-            if (!userAuth.Status)
-            {
+            if (!userAuth.user.Status)
                 return Unauthorized("User is inactive");
-            }
 
             string hashedPassword = Sha256.ComputeSHA256Hash(loginRequest.Password);
 
             if (hashedPassword != userAuth.ua.Password)
-            {
                 return Unauthorized("Invalid password");
-            }
 
-            // Check if it's the user's first login (AutogenPass == true)
+            // ✅ GENERATE TOKEN USING USER (NOT UserAuth)
+            var token = GenerateToken(userAuth.user);
+
+            // 🔥 SAME RESPONSE STRUCTURE AS SSO
             if (userAuth.ua.AutogenPass)
             {
-                // Let the user login but prompt them to change their password
-                var token = GenerateToken(userAuth.ua);
-                _loggerService.LogEvent($"User Logged-in (First Time)", "Login", userAuth.ua.UserId);
+                _loggerService.LogEvent("User Logged-in (First Time)", "Login", userAuth.user.UserId);
+
                 return Ok(new
                 {
                     token = token,
-                    userAuth.ua.UserId,
-                    userAuth.ua.AutogenPass,
-
+                    userId = userAuth.user.UserId,
+                    autogenPass = userAuth.ua.AutogenPass,
                     Message = "This is your first login, please change your password."
                 });
             }
-            else
-            {
-                // Normal login process
-                var token = GenerateToken(userAuth.ua);
-                _loggerService.LogEvent($"User Logged-in", "Login", userAuth.ua.UserId);
-                return Ok(new { token = token, userAuth.ua.UserId, userAuth.ua.AutogenPass, role = userAuth.Role });
-            }
 
+            _loggerService.LogEvent("User Logged-in", "Login", userAuth.user.UserId);
+
+            return Ok(new
+            {
+                token = token,
+                userId = userAuth.user.UserId,
+                autogenPass = userAuth.ua.AutogenPass,
+                role = userAuth.Role
+            });
+        }
+
+        //[HttpGet("sso-login")]
+        //public IActionResult SsoLogin(string token)
+        //{
+        //    try
+        //    {
+        //        var handler = new JwtSecurityTokenHandler();
+
+        //        var validationParameters = new TokenValidationParameters
+        //        {
+        //            ValidateIssuer = true,
+        //            ValidateAudience = true,
+        //            ValidateLifetime = true,
+        //            ValidateIssuerSigningKey = true,
+        //            ValidIssuer = _configuration["Jwt:Issuer"],
+        //            ValidAudience = _configuration["Jwt:Audience"],
+        //            IssuerSigningKey = new SymmetricSecurityKey(
+        //                Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]))
+        //        };
+
+        //        var principal = handler.ValidateToken(token, validationParameters, out _);
+        //        foreach (var claim in principal.Claims)
+        //        {
+        //            Console.WriteLine($"{claim.Type} : {claim.Value}");
+        //        }
+        //        // ✅ GET USERID FROM TOKEN
+        //        var userIdClaim = principal.Claims
+        //            .FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value;
+
+        //        if (string.IsNullOrEmpty(userIdClaim))
+        //            return Unauthorized("Invalid token - userid missing");
+
+        //        int userId = int.Parse(userIdClaim);
+
+
+        //        // 🔍 FIND USER IN FACTORY DB
+        //        var user = _context.Users.FirstOrDefault(u => u.UserId == userId);
+
+        //        if (user == null)
+        //        {
+        //            return Unauthorized("User not found in Factory DB");
+        //        }
+
+        //        // ✅ GENERATE LOCAL TOKEN FOR FACTORY
+        //        var localToken = GenerateToken(user);
+
+        //        return Ok(new
+        //        {
+        //            token = localToken,
+        //            userId = user.UserId
+        //        });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return Unauthorized(new { message = "SSO failed", error = ex.Message });
+        //    }
+        //}
+
+
+        [HttpGet("sso-login")]
+        public IActionResult SsoLogin(string token)
+        {
+            try
+            {
+                var handler = new JwtSecurityTokenHandler();
+
+                var validationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = _configuration["Jwt:Issuer"],
+                    ValidAudience = _configuration["Jwt:Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(
+                        Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]))
+                };
+
+                var principal = handler.ValidateToken(token, validationParameters, out _);
+
+                // ✅ Extract userId
+                var userIdClaim = principal.Claims
+                    .FirstOrDefault(c => c.Type == "userid")?.Value;
+                Console.WriteLine("===== TOKEN CLAIMS =====");
+                foreach (var claim in principal.Claims)
+                {
+                    Console.WriteLine($"Type: {claim.Type} | Value: {claim.Value}");
+                }
+                Console.WriteLine("========================");
+
+
+                if (string.IsNullOrEmpty(userIdClaim))
+                    return Unauthorized("Invalid token - userid missing");
+
+                int userId = int.Parse(userIdClaim);
+                Console.WriteLine($"Extracted UserId Claim: {userIdClaim}");
+                Console.WriteLine($"Extracted UserId Claim: {userIdClaim}");
+
+
+                // 🔥 SAME QUERY AS LOGIN API
+                var userAuth = (from user in _context.Users
+                                join ua in _context.UserAuths on user.UserId equals ua.UserId
+                                join r in _context.Set<Role>() on user.RoleId equals r.RoleId
+                                where user.UserId == userId
+                                select new
+                                {
+                                    user,
+                                    ua,
+                                    Role = new
+                                    {
+                                        r.RoleId,
+                                        r.RoleName,
+                                        r.PriorityOrder,
+                                        r.PermissionList,
+                                        r.Status,
+                                    }
+                                }).FirstOrDefault();
+
+                if (userAuth == null)
+                    return Unauthorized("User not found");
+
+                if (!userAuth.user.Status)
+                    return Unauthorized("User is inactive");
+
+                // ✅ Generate local token (same as login)
+                var localToken = GenerateToken(userAuth.user);
+
+                // ✅ SAME RESPONSE STRUCTURE AS LOGIN
+                if (userAuth.ua.AutogenPass)
+                {
+                    _loggerService.LogEvent($"User Logged-in (SSO First Time)", "Login", userAuth.ua.UserId);
+
+                    return Ok(new
+                    {
+                        token = localToken,
+                        userAuth.ua.UserId,
+                        userAuth.ua.AutogenPass,
+                        Message = "This is your first login, please change your password."
+                    });
+                }
+                else
+                {
+                    _loggerService.LogEvent($"User Logged-in via SSO", "Login", userAuth.ua.UserId);
+
+                    return Ok(new
+                    {
+                        token = localToken,
+                        userAuth.ua.UserId,
+                        userAuth.ua.AutogenPass,
+                        role = userAuth.Role
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return Unauthorized(new { message = "SSO failed", error = ex.Message });
+            }
         }
 
         // Change Password API

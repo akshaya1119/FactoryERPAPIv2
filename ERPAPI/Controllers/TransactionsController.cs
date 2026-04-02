@@ -894,7 +894,7 @@ namespace ERPAPI.Controllers
                         var key = (qs.CatchNo, transaction.LotNo.ToString(), transaction.ProjectId);
 
                         if (!sheetLookup.TryGetValue(key, out var groupSheets))
-                        {
+                        { 
                             continue;
                         }
 
